@@ -1277,6 +1277,10 @@ class DirectTabularRegressionForecaster(_DirectReducer):
         a tabular matrix.
     """
 
+    _tags = {
+        "tests:skip_by_name": ["test_scenario_does_not_modify_global_numpy_rng"],
+    }
+
     def __init__(
         self,
         estimator,
@@ -2977,6 +2981,7 @@ class YfromX(_ReducerMixin, BaseForecaster):
         "y_inner_mtype": ["pd.DataFrame", "pd-multiindex", "pd_multiindex_hier"],
         "capability:pred_int": True,
         "capability:categorical_in_X": True,
+        "tests:skip_by_name": ["test_scenario_does_not_modify_global_numpy_rng"],
     }
 
     def __init__(self, estimator, pooling="local"):
