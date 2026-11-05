@@ -1,3 +1,4 @@
+
 name: Reproduce macOS Python 3.12 failure
 
 on:
@@ -31,6 +32,26 @@ jobs:
       - name: Test estimator discovery
         run: |
           python -c "from sktime.registry import all_estimators; print('Discovered:', len(all_estimators()))"
+
+      - name: Identify failing estimator
+        run: |
+          python - <<'PY'
+          from sktime.registry import all_estimators
+
+          estimators = all_estimators()
+          print(f"Total estimators: {len(estimators)}")
+
+          for name, estimator in estimators:
+              try:
+                  estimator.get_test_params()
+              except Exception as exc:
+                  print(f"\nFAILED ESTIMATOR: {name}")
+                  print(f"CLASS: {estimator}")
+                  print(f"ERROR: {type(exc).__name__}: {exc}")
+                  raise
+
+          print("All estimator get_test_params() calls completed successfully.")
+          PY
 
       - name: Run failing test without xdist
         run: |
