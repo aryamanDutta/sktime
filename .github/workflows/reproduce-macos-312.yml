@@ -48,45 +48,17 @@ jobs:
           print("PyTorch:", torch.__version__)
           print("scikit-base:", skbase.__version__)
           print("Lightning:", lightning.__version__)
-          print("MPS available:", torch.backends.mps.is_available())
-          print(
-              "MPS is_available type:",
-              type(torch.backends.mps.is_available),
-          )
-          print(
-              "MPS is_available has __wrapped__:",
-              hasattr(torch.backends.mps.is_available, "__wrapped__"),
-          )
+
+          func = torch.backends.mps.is_available
+          print("MPS available:", func())
+          print("MPS function type:", type(func))
+          print("Has __wrapped__:", hasattr(func, "__wrapped__"))
           PY
 
       - name: Test Lightning import independently
         run: |
           python - <<'PY'
           import torch
-
-          func = torch.backends.mps.is_available
-          print("Before Lightning import:")
-          print("Function:", func)
-          print("Type:", type(func))
-          print("Has __wrapped__:", hasattr(func, "__wrapped__"))
-
-          import lightning.pytorch.callbacks
-
-          func = torch.backends.mps.is_available
-          print("\nAfter Lightning import:")
-          print("Function:", func)
-          print("Type:", type(func))
-          print("Has __wrapped__:", hasattr(func, "__wrapped__"))
-          PY
-
-      - name: Inspect DeepAR get_test_params independently
-        run: |
-          python - <<'PY'
-          import traceback
-          import torch
-          from sktime.forecasting.pytorchforecasting import (
-              PytorchForecastingDeepAR,
-          )
 
           def inspect_mps(label):
               func = torch.backends.mps.is_available
@@ -95,22 +67,44 @@ jobs:
               print("Type:", type(func))
               print("Has __wrapped__:", hasattr(func, "__wrapped__"))
 
-          inspect_mps("BEFORE get_test_params")
+          inspect_mps("BEFORE Lightning import")
+
+          import lightning.pytorch.callbacks
+
+          inspect_mps("AFTER Lightning import")
+          PY
+
+      - name: Inspect PatchTST get_test_params independently
+        run: |
+          python - <<'PY'
+          import traceback
+          import torch
+
+          from sktime.forecasting.patch_tst import PatchTSTForecaster
+
+          def inspect_mps(label):
+              func = torch.backends.mps.is_available
+              print(f"\n{label}")
+              print("Function:", func)
+              print("Type:", type(func))
+              print("Has __wrapped__:", hasattr(func, "__wrapped__"))
+
+          inspect_mps("BEFORE PatchTST get_test_params")
 
           try:
-              result = PytorchForecastingDeepAR.get_test_params()
-              print("\nget_test_params completed successfully.")
+              result = PatchTSTForecaster.get_test_params()
+              print("\nPatchTST get_test_params completed.")
               print("Result type:", type(result))
-              print("Result:", result)
+              print("Number of parameter sets:", len(result))
           except Exception:
-              print("\nget_test_params FAILED")
+              print("\nPatchTST get_test_params FAILED")
               traceback.print_exc()
               raise
 
-          inspect_mps("AFTER get_test_params")
+          inspect_mps("AFTER PatchTST get_test_params")
           PY
 
-      - name: Reproduce estimator test logic and identify failure
+      - name: Reproduce estimator sequence up to PatchTST
         run: |
           python - <<'PY'
           import traceback
@@ -138,11 +132,10 @@ jobs:
                   f"\n[{index}/{total}] Testing {name}",
                   flush=True,
               )
-              print(f"MPS state before: {before}", flush=True)
+              print(f"MPS before: {before}", flush=True)
 
               try:
-                  # Reproduce the exact condition from
-                  # test_excluded_tests_by_test.
+                  # Same condition used by test_excluded_tests_by_test.
                   if (
                       (
                           len(estimator.get_test_params()) < 2
@@ -165,14 +158,11 @@ jobs:
                       pass
 
               except Exception:
-                  after = mps_state()
-
                   print("\n========== FAILURE ==========", flush=True)
                   print(f"Estimator: {name}", flush=True)
                   print(f"Previous estimator: {previous}", flush=True)
-                  print(f"MPS state before: {before}", flush=True)
-                  print(f"MPS state after: {after}", flush=True)
-
+                  print(f"MPS before: {before}", flush=True)
+                  print(f"MPS after: {mps_state()}", flush=True)
                   traceback.print_exc()
                   raise
 
@@ -180,17 +170,22 @@ jobs:
 
               if before != after:
                   print(
-                      f"MPS STATE CHANGED by {name}: "
-                      f"{before} -> {after}",
+                      f"\nMPS STATE CHANGED BY: {name}",
                       flush=True,
                   )
+                  print(f"Before: {before}", flush=True)
+                  print(f"After: {after}", flush=True)
 
               previous = name
 
-          print(
-              "\nAll estimators completed without errors.",
-              flush=True,
-          )
+              if name == "PatchTSTForecaster":
+                  print(
+                      "\nReached PatchTSTForecaster successfully.",
+                      flush=True,
+                  )
+                  break
+
+          print("\nSequence diagnostic completed.", flush=True)
           PY
 
       - name: Run original failing test
