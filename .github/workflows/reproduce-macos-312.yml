@@ -35,6 +35,12 @@ jobs:
         run: |
           python -c "from sktime.registry import all_estimators; print('Discovered:', len(all_estimators()))"
 
+      - name: Test Lightning import independently
+        run: |
+          python -c "import torch; print('Before Lightning:', type(torch.backends.mps.is_available), hasattr(torch.backends.mps.is_available, '__wrapped__'))"
+          python -c "import lightning.pytorch.callbacks"
+          python -c "import torch; print('After Lightning:', type(torch.backends.mps.is_available), hasattr(torch.backends.mps.is_available, '__wrapped__'))"
+
       - name: Identify failing estimator
         run: |
           python - <<'PY'
