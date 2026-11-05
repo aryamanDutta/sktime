@@ -41,26 +41,31 @@ jobs:
           python -c "import lightning.pytorch.callbacks"
           python -c "import torch; print('After Lightning:', type(torch.backends.mps.is_available), hasattr(torch.backends.mps.is_available, '__wrapped__'))"
 
-      - name: Identify failing estimator
+      - name: Inspect DeepAR get_test_params
         run: |
           python - <<'PY'
-          from sktime.registry import all_estimators
+          import traceback
+          import torch
+          from sktime.forecasting.pytorchforecasting import PytorchForecastingDeepAR
 
-          estimators = all_estimators()
-          print(f"Total estimators: {len(estimators)}")
+          def inspect_mps(label):
+              func = torch.backends.mps.is_available
+              print(f"\n{label}")
+              print("Function:", func)
+              print("Type:", type(func))
+              print("Has __wrapped__:", hasattr(func, "__wrapped__"))
 
-          for name, estimator in estimators:
-              try:
-                  estimator.get_test_params()
-              except Exception as exc:
-                  print(f"\nFAILED ESTIMATOR: {name}")
-                  print(f"CLASS: {estimator}")
-                  print(f"ERROR: {type(exc).__name__}: {exc}")
-                  raise
+          inspect_mps("BEFORE get_test_params")
 
-          print("All estimator get_test_params() calls completed successfully.")
+          try:
+              PytorchForecastingDeepAR.get_test_params()
+          except Exception:
+              print("\nget_test_params FAILED")
+              traceback.print_exc()
+
+          inspect_mps("AFTER get_test_params")
           PY
 
-      - name: Run failing test without xdist
+      - name: Run original failing test without xdist
         run: |
           python -m pytest -n 0 sktime/tests/tests/test_test_utils.py::test_excluded_tests_by_test -vv
