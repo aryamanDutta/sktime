@@ -1,12 +1,16 @@
-
 name: Reproduce macOS Python 3.12 failure
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   reproduce:
+    name: Reproduce macOS Python 3.12 failure
     runs-on: macos-latest
+    timeout-minutes: 90
 
     steps:
       - name: Checkout repository
@@ -14,39 +18,75 @@ jobs:
         with:
           ref: fix-10995-tempo-forecaster
 
-      - name: Set up Python
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Set up uv
+      - name: Install uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Install dependencies
+      - name: Display environment information
+        run: |
+          python --version
+          python -c "import platform; print('Platform:', platform.platform()); print('Architecture:', platform.machine())"
+          uv --version
+
+      - name: Install sktime dependencies
         run: |
           uv pip install --system ".[all_extras,dev,dl,compatibility_tests]" --no-cache-dir
 
-      - name: Print environment information
+      - name: Inspect installed dependency versions
         run: |
-          python -c "import sys, torch, skbase; print('Python:', sys.version); print('PyTorch:', torch.__version__); print('scikit-base:', skbase.__version__)"
-          python -c "import torch; f = torch.backends.mps.is_available; print('MPS function type:', type(f)); print('Has __wrapped__:', hasattr(f, '__wrapped__')); print('MPS available:', f())"
+          python - <<'PY'
+          import sys
+          import torch
+          import skbase
+          import lightning
 
-      - name: Test estimator discovery
-        run: |
-          python -c "from sktime.registry import all_estimators; print('Discovered:', len(all_estimators()))"
+          print("Python:", sys.version)
+          print("PyTorch:", torch.__version__)
+          print("scikit-base:", skbase.__version__)
+          print("Lightning:", lightning.__version__)
+          print("MPS available:", torch.backends.mps.is_available())
+          print(
+              "MPS is_available type:",
+              type(torch.backends.mps.is_available),
+          )
+          print(
+              "MPS is_available has __wrapped__:",
+              hasattr(torch.backends.mps.is_available, "__wrapped__"),
+          )
+          PY
 
       - name: Test Lightning import independently
         run: |
-          python -c "import torch; print('Before Lightning:', type(torch.backends.mps.is_available), hasattr(torch.backends.mps.is_available, '__wrapped__'))"
-          python -c "import lightning.pytorch.callbacks"
-          python -c "import torch; print('After Lightning:', type(torch.backends.mps.is_available), hasattr(torch.backends.mps.is_available, '__wrapped__'))"
+          python - <<'PY'
+          import torch
 
-      - name: Inspect DeepAR get_test_params
+          func = torch.backends.mps.is_available
+          print("Before Lightning import:")
+          print("Function:", func)
+          print("Type:", type(func))
+          print("Has __wrapped__:", hasattr(func, "__wrapped__"))
+
+          import lightning.pytorch.callbacks
+
+          func = torch.backends.mps.is_available
+          print("\nAfter Lightning import:")
+          print("Function:", func)
+          print("Type:", type(func))
+          print("Has __wrapped__:", hasattr(func, "__wrapped__"))
+          PY
+
+      - name: Inspect DeepAR get_test_params independently
         run: |
           python - <<'PY'
           import traceback
           import torch
-          from sktime.forecasting.pytorchforecasting import PytorchForecastingDeepAR
+          from sktime.forecasting.pytorchforecasting import (
+              PytorchForecastingDeepAR,
+          )
 
           def inspect_mps(label):
               func = torch.backends.mps.is_available
@@ -58,14 +98,102 @@ jobs:
           inspect_mps("BEFORE get_test_params")
 
           try:
-              PytorchForecastingDeepAR.get_test_params()
+              result = PytorchForecastingDeepAR.get_test_params()
+              print("\nget_test_params completed successfully.")
+              print("Result type:", type(result))
+              print("Result:", result)
           except Exception:
               print("\nget_test_params FAILED")
               traceback.print_exc()
+              raise
 
           inspect_mps("AFTER get_test_params")
           PY
 
-      - name: Run original failing test without xdist
+      - name: Reproduce estimator test logic and identify failure
         run: |
-          python -m pytest -n 0 sktime/tests/tests/test_test_utils.py::test_excluded_tests_by_test -vv
+          python - <<'PY'
+          import traceback
+          import torch
+          from sktime.registry import all_estimators
+
+          def mps_state():
+              func = torch.backends.mps.is_available
+              return {
+                  "type": type(func).__name__,
+                  "has_wrapped": hasattr(func, "__wrapped__"),
+              }
+
+          all_ests = all_estimators()
+          total = len(all_ests)
+
+          print(f"Total estimators: {total}", flush=True)
+
+          previous = None
+
+          for index, (name, estimator) in enumerate(all_ests, start=1):
+              before = mps_state()
+
+              print(
+                  f"\n[{index}/{total}] Testing {name}",
+                  flush=True,
+              )
+              print(f"MPS state before: {before}", flush=True)
+
+              try:
+                  # Reproduce the exact condition from
+                  # test_excluded_tests_by_test.
+                  if (
+                      (
+                          len(estimator.get_test_params()) < 2
+                          or isinstance(
+                              estimator.get_test_params(),
+                              dict,
+                          )
+                      )
+                      and (
+                          len(estimator.get_param_names())
+                          - len(
+                              estimator.get_class_tags().get(
+                                  "reserved_params",
+                                  [],
+                              )
+                          )
+                          > 0
+                      )
+                  ):
+                      pass
+
+              except Exception:
+                  after = mps_state()
+
+                  print("\n========== FAILURE ==========", flush=True)
+                  print(f"Estimator: {name}", flush=True)
+                  print(f"Previous estimator: {previous}", flush=True)
+                  print(f"MPS state before: {before}", flush=True)
+                  print(f"MPS state after: {after}", flush=True)
+
+                  traceback.print_exc()
+                  raise
+
+              after = mps_state()
+
+              if before != after:
+                  print(
+                      f"MPS STATE CHANGED by {name}: "
+                      f"{before} -> {after}",
+                      flush=True,
+                  )
+
+              previous = name
+
+          print(
+              "\nAll estimators completed without errors.",
+              flush=True,
+          )
+          PY
+
+      - name: Run original failing test
+        if: success()
+        run: |
+          pytest -n 0 sktime/tests/tests/test_test_utils.py::test_excluded_tests_by_test -vv
