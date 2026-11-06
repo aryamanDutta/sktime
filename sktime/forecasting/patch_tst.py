@@ -11,6 +11,7 @@ __author__ = [
 ]
 
 
+import logging
 from functools import lru_cache
 
 import numpy as np
@@ -21,6 +22,8 @@ from sktime.forecasting.base import BaseForecaster, ForecastingHorizon
 from sktime.split import temporal_train_test_split
 from sktime.utils.dependencies import _safe_import
 
+logger = logging.getLogger(__name__)
+
 torch = _safe_import("torch")
 Dataset = _safe_import("torch.utils.data.Dataset")
 
@@ -29,6 +32,9 @@ PatchTSTForPrediction = _safe_import("transformers.PatchTSTForPrediction")
 PatchTSTModel = _safe_import("transformers.PatchTSTModel")
 Trainer = _safe_import("transformers.Trainer")
 TrainingArguments = _safe_import("transformers.TrainingArguments")
+is_torch_mps_available = _safe_import(
+    "transformers.utils.import_utils.is_torch_mps_available"
+)
 
 
 class PatchTSTForecaster(BaseForecaster):
@@ -561,7 +567,30 @@ class PatchTSTForecaster(BaseForecaster):
         training_args_dict = dict(self._training_args)
         if not _check_soft_dependencies("transformers<5.0", severity="none"):
             training_args_dict.pop("overwrite_output_dir", None)
+        # TEMPORARY MPS DIAGNOSTICS: remove after device investigation.
+        cache_info = getattr(is_torch_mps_available, "cache_info", None)
+        cache_state = cache_info() if cache_info is not None else "unavailable"
+        logger.warning(
+            "PatchTST MPS diagnostics before TrainingArguments: "
+            "torch_mps_available=%s, torch_mps_built=%s, "
+            "transformers_mps_cache=%s",
+            torch.backends.mps.is_available(),
+            torch.backends.mps.is_built(),
+            cache_state,
+        )
         training_args = TrainingArguments(**training_args_dict)
+        # TEMPORARY MPS DIAGNOSTICS: remove after device investigation.
+        cache_info = getattr(is_torch_mps_available, "cache_info", None)
+        cache_state = cache_info() if cache_info is not None else "unavailable"
+        logger.warning(
+            "PatchTST MPS diagnostics after TrainingArguments: "
+            "torch_mps_available=%s, torch_mps_built=%s, "
+            "transformers_mps_cache=%s, training_args_device=%s",
+            torch.backends.mps.is_available(),
+            torch.backends.mps.is_built(),
+            cache_state,
+            training_args.device,
+        )
         # Get the Trainer
         trainer = Trainer(
             model=self.model,
@@ -570,6 +599,23 @@ class PatchTSTForecaster(BaseForecaster):
             eval_dataset=eval_dataset,
             compute_metrics=self.compute_metrics,
             callbacks=self.callbacks,
+        )
+        # TEMPORARY MPS DIAGNOSTICS: remove after device investigation.
+        cache_info = getattr(is_torch_mps_available, "cache_info", None)
+        cache_state = cache_info() if cache_info is not None else "unavailable"
+        logger.warning(
+            "PatchTST MPS diagnostics after Trainer: "
+            "torch_mps_available=%s, torch_mps_built=%s, "
+            "transformers_mps_cache=%s, training_args_device=%s, "
+            "trainer_args_device=%s, accelerator_device=%s, "
+            "model_parameter_device=%s",
+            torch.backends.mps.is_available(),
+            torch.backends.mps.is_built(),
+            cache_state,
+            training_args.device,
+            trainer.args.device,
+            trainer.accelerator.device,
+            next(trainer.model.parameters()).device,
         )
 
         # Train the model
